@@ -1,0 +1,16 @@
+[
+  {
+    "id": "prueba-mesa-1-001",
+    "tableId": 1,
+    "items": [
+      {
+        "productId": 1,
+        "name": "Hamburguesa clásica",
+        "price": 180,
+        "quantity": 1
+      }
+    ],
+    "createdAt": "2026-10-22T12:00:00.000Z",
+    "receivedAt": "2026-10-22T17:04:59.919Z"
+  }
+]
