@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "server": "node server/server.cjs"
+    "server": "node --env-file-if-exists=.env --env-file-if-exists=.env.local server/server.cjs"
   },
   "dependencies": {
     "cors": "^2.8.6",
