@@ -1,0 +1,42 @@
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: ["ba1e47a", "main"] # Cambia "ba1e47a" o asegúrate de usar la rama principal de tu repo (ej. main o master)
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      # Si tu página web está dentro de la carpeta mesa-facil-pos, 
+      # subimos esa carpeta como artefacto de Pages:
+      - name: Setup Pages
+        uses: actions/configure-pages@v4
+        
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './mesa-facil-pos' # <--- Aquí indicas la carpeta donde está tu index.html
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions-js/deploy-pages@v4 # O usa actions/deploy-pages@v4 según prefieras
