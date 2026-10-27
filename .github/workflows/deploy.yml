@@ -2,7 +2,8 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-  branches: ["main"]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -25,22 +26,21 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: './mesa-facil-pos/package-lock.json' # o yarn.lock
+          cache-dependency-path: './mesa-facil-pos/package-lock.json'
 
       - name: Install dependencies & Build
         run: |
           cd mesa-facil-pos
           npm install
-          npm run build # (O el comando de compilación que uses, ej. vite build)
+          npm run build
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
-      # Usualmente Vite genera la salida en una carpeta llamada 'dist' o 'build' dentro de mesa-facil-pos
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: './mesa-facil-pos/dist' # Cambia 'dist' por la carpeta de salida real de tu build (ej. 'build')
+          path: './mesa-facil-pos/dist'
 
   deploy:
     environment:
