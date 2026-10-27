@@ -6,10 +6,17 @@ import {
   Search, X, CheckCircle2, Banknote, CreditCard, Clock3, ArrowLeft,
   ShoppingCart, BookOpenText
 } from 'lucide-react';
+import Compras, { type PurchaseLine } from './Compras';
 import './index.css';
 
 const RECEIPT_WIDTH_MM: 80 | 100 = 80;
 const timestampNow = () => new Date().toISOString();
+const getLocalDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
 const localDateTimeNow = () => new Date().toLocaleString('es-NI', {
   dateStyle: 'short',
   timeStyle: 'short',
@@ -256,7 +263,7 @@ async function createProductImageDataUrl(file: File): Promise<string> {
 export default function App() {
   const [role, setRole] = useState<'Caja' | 'Mesero'>('Caja');
   const [page, setPage] = useState('Mesas');
-  const [inventoryTab, setInventoryTab] = useState<'menu' | 'compras' | 'kardex'>('menu');
+  const [inventoryTab, setInventoryTab] = useState<'menu' | 'kardex'>('menu');
   const [floorPlans, setFloorPlans] = useState<FloorPlan[]>(() => {
     const saved = readStorage<FloorPlan[]>('mf-floor-plans', createInitialFloorPlan());
     return saved.length > 0 ? saved : createInitialFloorPlan();
@@ -291,6 +298,7 @@ export default function App() {
     'controlable' | 'no-controlable'
   >('controlable');
   const [editingProductId, setEditingProductId] = useState<number | null>(null);
+  const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
   const [isAddingProduct, setIsAddingProduct] = useState(false);
   const [pendingImageProductId, setPendingImageProductId] = useState<number | null>(null);
   const [pendingImageProductName, setPendingImageProductName] = useState('');
@@ -305,10 +313,30 @@ export default function App() {
   const [cashReceived, setCashReceived] = useState('');
   const [restaurantSaved, setRestaurantSaved] = useState(false);
   const [restaurantSaveError, setRestaurantSaveError] = useState('');
-  const [purchaseProductId, setPurchaseProductId] = useState('');
-  const [purchaseQuantity, setPurchaseQuantity] = useState('');
-  const [purchaseUnitCost, setPurchaseUnitCost] = useState('');
-  const [purchaseReason, setPurchaseReason] = useState('');
+  const [kardexProduct, setKardexProduct] = useState('');
+  const [kardexType, setKardexType] = useState<'Todos' | InventoryMovement['type']>('Todos');
+  const [kardexPeriod, setKardexPeriod] = useState<
+    'hoy' | 'ayer' | '7' | '30' | 'todos' | 'personalizado'
+  >('30');
+  const [kardexDateFrom, setKardexDateFrom] = useState('');
+  const [kardexDateTo, setKardexDateTo] = useState('');
+  const [kardexSort, setKardexSort] = useState<'recientes' | 'antiguos'>('recientes');
+  const [kardexDateKeys] = useState(() => {
+    const today = new Date();
+    const todayKey = getLocalDateKey(today);
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const sevenDayStart = new Date(today);
+    sevenDayStart.setDate(today.getDate() - 6);
+    const thirtyDayStart = new Date(today);
+    thirtyDayStart.setDate(today.getDate() - 29);
+    return {
+      today: todayKey,
+      yesterday: getLocalDateKey(yesterday),
+      sevenDayStart: getLocalDateKey(sevenDayStart),
+      thirtyDayStart: getLocalDateKey(thirtyDayStart),
+    };
+  });
 
   useEffect(() => {
     localStorage.setItem('mf-products', JSON.stringify(products));
@@ -1055,45 +1083,53 @@ export default function App() {
     setNotice('El producto se guardó sin imagen. Puedes agregarla después.');
   };
 
-  const registerPurchase = () => {
-    const product = products.find(
-      item => item.id === Number(purchaseProductId)
-    );
-    const quantity = Number(purchaseQuantity);
-    const unitCost = Number(purchaseUnitCost);
-    const reason = purchaseReason.trim();
-
-    if (!product || product.stock === null) {
-      setNotice('Selecciona un producto que controle existencias.');
-      return;
-    }
-    if (!Number.isInteger(quantity) || quantity <= 0 ||
-        !Number.isFinite(unitCost) || unitCost < 0) {
-      setNotice('Indica una cantidad entera positiva y un costo unitario válido.');
-      return;
+  const receivePurchase = (
+    purchaseId: string,
+    lines: PurchaseLine[],
+    reference: string
+  ): string | null => {
+    if (lines.length === 0) return 'La compra no contiene productos para recibir.';
+    const movementPrefix = `purchase-${purchaseId}-`;
+    if (movements.some(movement => movement.id.startsWith(movementPrefix))) {
+      return null;
     }
 
-    const stockBefore = product.stock;
-    const stockAfter = stockBefore + quantity;
-    setProducts(old => old.map(item =>
-      item.id === product.id ? { ...item, stock: stockAfter } : item
-    ));
-    setMovements(old => [{
-      id: `${Date.now()}-${product.id}`,
-      productId: product.id,
-      productName: product.name,
-      type: 'Compra',
-      quantity,
-      stockBefore,
-      stockAfter,
-      unitCost,
-      reason: reason || 'Compra de inventario',
-      createdAt: timestampNow(),
-    }, ...old]);
-    setPurchaseQuantity('');
-    setPurchaseUnitCost('');
-    setPurchaseReason('');
-    setNotice(`Compra registrada. Stock de ${product.name}: ${stockAfter}.`);
+    const stockByProduct = new Map<number, number>();
+    const receiptMovements: InventoryMovement[] = [];
+    const createdAt = timestampNow();
+    for (const [index, line] of lines.entries()) {
+      const product = products.find(item => item.id === line.productId);
+      if (!product || product.stock === null) {
+        return `No se puede recibir ${line.productName}: el producto ya no existe o no controla existencias.`;
+      }
+      if (!Number.isInteger(line.quantity) || line.quantity <= 0 ||
+        !Number.isFinite(line.unitCost) || line.unitCost < 0) {
+        return `La cantidad o el costo de ${line.productName} no es válido.`;
+      }
+
+      const stockBefore = stockByProduct.get(product.id) ?? product.stock;
+      const stockAfter = stockBefore + line.quantity;
+      stockByProduct.set(product.id, stockAfter);
+      receiptMovements.push({
+        id: `${movementPrefix}${product.id}-${index}`,
+        productId: product.id,
+        productName: product.name,
+        type: 'Compra',
+        quantity: line.quantity,
+        stockBefore,
+        stockAfter,
+        unitCost: line.unitCost,
+        reason: reference,
+        createdAt,
+      });
+    }
+
+    setProducts(old => old.map(product => {
+      const stock = stockByProduct.get(product.id);
+      return stock === undefined ? product : { ...product, stock };
+    }));
+    setMovements(old => [...receiptMovements, ...old]);
+    return null;
   };
 
   const adjustStock = (productId: number, quantity: number, reason: string) => {
@@ -1268,11 +1304,125 @@ export default function App() {
     (category === 'Todos' || p.category === category)
   );
 
+  const periodStartKey = kardexPeriod === '7'
+    ? kardexDateKeys.sevenDayStart
+    : kardexDateKeys.thirtyDayStart;
+  const hasInvalidKardexDateRange =
+    kardexPeriod === 'personalizado' &&
+    Boolean(kardexDateFrom && kardexDateTo && kardexDateFrom > kardexDateTo);
+  const matchingProductIds = new Set(
+    products
+      .filter(product =>
+        product.name.toLowerCase().includes(kardexProduct.trim().toLowerCase())
+      )
+      .map(product => product.id)
+  );
+  const filteredMovements = movements
+    .filter(movement => {
+      if (!matchingProductIds.has(movement.productId)) return false;
+      if (kardexType !== 'Todos' && movement.type !== kardexType) return false;
+
+      const movementDateValue = new Date(movement.createdAt);
+      if (!Number.isFinite(movementDateValue.getTime())) return false;
+      const movementDate = getLocalDateKey(movementDateValue);
+
+      if (kardexPeriod === 'hoy' && movementDate !== kardexDateKeys.today) return false;
+      if (kardexPeriod === 'ayer' && movementDate !== kardexDateKeys.yesterday) return false;
+      if (
+        (kardexPeriod === '7' || kardexPeriod === '30') &&
+        (movementDate < periodStartKey || movementDate > kardexDateKeys.today)
+      ) return false;
+      if (kardexPeriod === 'personalizado') {
+        if (hasInvalidKardexDateRange) return false;
+        if (kardexDateFrom && movementDate < kardexDateFrom) return false;
+        if (kardexDateTo && movementDate > kardexDateTo) return false;
+      }
+
+      return true;
+    })
+    .sort((a, b) => {
+      const dateA = new Date(a.createdAt).getTime();
+      const dateB = new Date(b.createdAt).getTime();
+      return kardexSort === 'antiguos' ? dateA - dateB : dateB - dateA;
+    });
+
+  const allVisibleProductsSelected =
+    visibleProducts.length > 0 &&
+    visibleProducts.every(p => selectedProductIds.includes(p.id));
+
+  const toggleSelectAllProducts = () => {
+    if (allVisibleProductsSelected) {
+      const visibleIds = new Set(visibleProducts.map(p => p.id));
+      setSelectedProductIds(old => old.filter(id => !visibleIds.has(id)));
+    } else {
+      setSelectedProductIds(old =>
+        Array.from(new Set([...old, ...visibleProducts.map(p => p.id)]))
+      );
+    }
+  };
+
+  const toggleProductSelection = (productId: number) => {
+    setSelectedProductIds(old =>
+      old.includes(productId)
+        ? old.filter(id => id !== productId)
+        : [...old, productId]
+    );
+  };
+
+  const deleteSelectedProducts = () => {
+    const selectedProducts = products.filter(p => selectedProductIds.includes(p.id));
+
+    if (selectedProducts.length === 0) {
+      setNotice('Selecciona al menos un producto para eliminar.');
+      return;
+    }
+
+    const productsInOpenAccounts = selectedProducts.filter(p =>
+      tables.some(table =>
+        table.items.some(item => item.productId === p.id)
+      )
+    );
+    const blockedIds = new Set(productsInOpenAccounts.map(p => p.id));
+    const deletableProducts = selectedProducts.filter(p => !blockedIds.has(p.id));
+
+    if (deletableProducts.length === 0) {
+      setNotice(
+        'No se eliminó ningún producto: todos los seleccionados están en cuentas abiertas.'
+      );
+      return;
+    }
+
+    const blockedMessage = productsInOpenAccounts.length > 0
+      ? `\n\nNo se eliminarán ${productsInOpenAccounts.length} producto(s) que aparecen en cuentas abiertas.`
+      : '';
+    const confirmed = window.confirm(
+      `¿Eliminar definitivamente ${deletableProducts.length} producto(s)? Esta acción no se puede deshacer.${blockedMessage}`
+    );
+
+    if (!confirmed) return;
+
+    const deletedIds = new Set(deletableProducts.map(p => p.id));
+    setProducts(old => old.filter(p => !deletedIds.has(p.id)));
+    setSelectedProductIds(old => old.filter(id => !deletedIds.has(id)));
+
+    if (editingProductId !== null && deletedIds.has(editingProductId)) {
+      cancelEditProduct();
+    }
+
+    setNotice(
+      `Se eliminaron ${deletableProducts.length} producto(s).` +
+      (productsInOpenAccounts.length > 0
+        ? ` Se conservaron ${productsInOpenAccounts.length} producto(s) protegidos por cuentas abiertas.`
+        : '')
+    );
+  };
+
   const nav = [
     { name: 'Mesas', icon: LayoutDashboard },
     { name: 'Edición', icon: Settings },
     { name: 'Comandas', icon: Utensils },
     { name: 'Inventario', icon: Package },
+    { name: 'Compras', icon: ShoppingCart },
     { name: 'Arqueo', icon: ClipboardCheck },
     { name: 'Configuración', icon: Settings },
   ];
@@ -1752,21 +1902,6 @@ export default function App() {
 
             <button
               type="button"
-              className={`inventory-tab ${inventoryTab === 'compras' ? 'selected' : ''}`}
-              aria-pressed={inventoryTab === 'compras'}
-              onClick={() => setInventoryTab('compras')}
-            >
-              <span className="inventory-tab-icon purchase-icon"><ShoppingCart size={22}/></span>
-              <span className="inventory-tab-copy">
-                <strong>Registrar compras</strong>
-                <small>Entradas y costos de adquisición</small>
-                <b>Reponer existencias</b>
-              </span>
-              <span className="inventory-tab-arrow" aria-hidden="true">→</span>
-            </button>
-
-            <button
-              type="button"
               className={`inventory-tab ${inventoryTab === 'kardex' ? 'selected' : ''}`}
               aria-pressed={inventoryTab === 'kardex'}
               onClick={() => setInventoryTab('kardex')}
@@ -1826,8 +1961,54 @@ export default function App() {
                   : <><Plus size={17}/> {isAddingProduct ? 'Buscando imagen…' : 'Agregar'}</>}
               </button>
             </div>
-            <div className="table-scroll"><table><thead><tr><th>Artículo</th><th>Categoría</th><th>Precio</th><th>Stock</th><th>Acciones</th></tr></thead>
-              <tbody>{products.map(p => <tr key={p.id}><td><strong>{p.name}</strong></td><td>{p.category}</td><td>{formatCurrency(p.price)}</td><td>{p.stock === null ? 'No controlable' : `${p.stock} unidades`}</td>
+            <div className="inventory-bulk-actions">
+              <label className="inventory-select-all">
+                <input
+                  type="checkbox"
+                  checked={allVisibleProductsSelected}
+                  onChange={toggleSelectAllProducts}
+                  disabled={visibleProducts.length === 0}
+                />
+                <span>
+                  {allVisibleProductsSelected
+                    ? 'Desmarcar todos'
+                    : 'Seleccionar todos'}
+                </span>
+              </label>
+              <span>{selectedProductIds.length} seleccionado(s)</span>
+              <button
+                type="button"
+                className="small-action danger"
+                onClick={deleteSelectedProducts}
+                disabled={selectedProductIds.length === 0}
+              >
+                <Trash2 size={15}/>
+                Eliminar seleccionados ({selectedProductIds.length})
+              </button>
+            </div>
+            <div className="table-scroll">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Seleccionar</th>
+                    <th>Artículo</th>
+                    <th>Categoría</th>
+                    <th>Precio</th>
+                    <th>Stock</th>
+                    <th>Acciones</th>
+                  </tr>
+                </thead>
+              <tbody>
+              {visibleProducts.map(p => <tr key={p.id}>
+                <td>
+                  <input
+                    type="checkbox"
+                    aria-label={`Seleccionar ${p.name}`}
+                    checked={selectedProductIds.includes(p.id)}
+                    onChange={() => toggleProductSelection(p.id)}
+                  />
+                </td>
+                <td><strong>{p.name}</strong></td><td>{p.category}</td><td>{formatCurrency(p.price)}</td><td>{p.stock === null ? 'No controlable' : `${p.stock} unidades`}</td>
                 <td>
                   <button className="small-action" disabled={isAddingProduct} onClick={() => startEditProduct(p)} aria-label={`Editar ${p.name}`} title={`Editar ${p.name}`}>
                     <Pencil size={15}/>
@@ -1846,6 +2027,7 @@ export default function App() {
 
                     if (window.confirm(`¿Eliminar definitivamente ${p.name}?`)) {
                       setProducts(old => old.filter(product => product.id !== p.id));
+                      setSelectedProductIds(old => old.filter(id => id !== p.id));
                       if (editingProductId === p.id) {
                         setEditingProductId(null);
                         setNewName('');
@@ -1859,53 +2041,190 @@ export default function App() {
                   }} aria-label={`Eliminar ${p.name}`} title={`Eliminar ${p.name}`}>
                     <Trash2 size={15}/> Eliminar
                   </button>
-                </td></tr>)}</tbody>
-            </table></div>
+                </td>
+              </tr>)}
+              </tbody>
+              </table>
+            </div>
           </section>
         </>}
 
-        {page === 'Inventario' && inventoryTab === 'compras' && <section className="panel inventory-content">
-          <h2>Registrar compra de inventario</h2>
-          <p>Las compras aumentan existencias y generan una entrada en el Kardex.</p>
-          <div className="purchase-form">
-            <label>Producto
-              <select value={purchaseProductId} onChange={event => setPurchaseProductId(event.target.value)}>
-                <option value="">Selecciona un producto</option>
-                {products.filter(product => product.stock !== null).map(product =>
-                  <option key={product.id} value={product.id}>{product.name} · stock {product.stock}</option>
-                )}
-              </select>
-            </label>
-            <label>Cantidad
-              <input type="number" min="1" step="1" value={purchaseQuantity} onChange={event => setPurchaseQuantity(event.target.value)} placeholder="Unidades"/>
-            </label>
-            <label>Costo unitario ({restaurant.currency === 'USD' ? 'US$' : 'C$'})
-              <input type="number" min="0" step="0.01" value={purchaseUnitCost} onChange={event => setPurchaseUnitCost(event.target.value)} placeholder="0.00"/>
-            </label>
-            <label>Referencia o motivo
-              <input value={purchaseReason} onChange={event => setPurchaseReason(event.target.value)} placeholder="Proveedor, factura..."/>
-            </label>
-            <button className="primary-button" onClick={registerPurchase}><ShoppingCart size={17}/> Registrar compra</button>
-          </div>
-        </section>}
+        {page === 'Compras' && (
+          <Compras
+            products={products}
+            currency={restaurant.currency}
+            onReceivePurchase={receivePurchase}
+          />
+        )}
 
-        {page === 'Inventario' && inventoryTab === 'kardex' && <section className="panel inventory-content">
-          <div className="section-heading"><div><h2>Kardex de inventario</h2><p>Entradas por compras, salidas por ventas cobradas y ajustes de existencias.</p></div></div>
-          {movements.length === 0
-            ? <div className="empty-state"><BookOpenText size={32}/><strong>Aún no hay movimientos</strong><p>Las compras, ventas cobradas y ajustes aparecerán aquí.</p></div>
-            : <div className="table-scroll"><table><thead><tr><th>Fecha</th><th>Producto</th><th>Tipo</th><th>Cantidad</th><th>Stock anterior</th><th>Stock nuevo</th><th>Costo unitario</th><th>Motivo</th></tr></thead>
-              <tbody>{movements.map(movement => <tr key={movement.id}>
-                <td>{new Date(movement.createdAt).toLocaleString('es-NI')}</td>
-                <td><strong>{movement.productName}</strong></td>
-                <td>{movement.type}</td>
-                <td className={movement.quantity < 0 ? 'movement-out' : 'movement-in'}>{movement.quantity > 0 ? '+' : ''}{movement.quantity}</td>
-                <td>{movement.stockBefore}</td>
-                <td>{movement.stockAfter}</td>
-                <td>{movement.unitCost === null ? '—' : formatCurrency(movement.unitCost)}</td>
-                <td>{movement.reason}</td>
-              </tr>)}</tbody>
-            </table></div>}
-        </section>}
+        {page === 'Inventario' && inventoryTab === 'kardex' && (
+          <section className="panel inventory-content">
+            <div className="section-heading">
+              <div>
+                <h2>Kardex de inventario</h2>
+                <p>
+                  Consulta compras, ventas cobradas y ajustes de existencias
+                  de los productos activos.
+                </p>
+              </div>
+            </div>
+
+            <div className="kardex-filters">
+              <label>
+                Buscar producto
+                <input
+                  type="search"
+                  value={kardexProduct}
+                  onChange={event => setKardexProduct(event.target.value)}
+                  placeholder="Nombre del producto..."
+                />
+              </label>
+
+              <label>
+                Tipo de movimiento
+                <select
+                  value={kardexType}
+                  onChange={event => setKardexType(
+                    event.target.value as 'Todos' | InventoryMovement['type']
+                  )}
+                >
+                  <option value="Todos">Todos los movimientos</option>
+                  <option value="Compra">Compras / Entradas</option>
+                  <option value="Venta">Ventas / Salidas</option>
+                  <option value="Ajuste">Ajustes de inventario</option>
+                </select>
+              </label>
+
+              <label>
+                Período
+                <select
+                  value={kardexPeriod}
+                  onChange={event => setKardexPeriod(
+                    event.target.value as typeof kardexPeriod
+                  )}
+                >
+                  <option value="hoy">Hoy</option>
+                  <option value="ayer">Ayer</option>
+                  <option value="7">Últimos 7 días</option>
+                  <option value="30">Últimos 30 días</option>
+                  <option value="todos">Todas las fechas</option>
+                  <option value="personalizado">Rango personalizado</option>
+                </select>
+              </label>
+
+              <label>
+                Ordenar por fecha
+                <select
+                  value={kardexSort}
+                  onChange={event => setKardexSort(
+                    event.target.value as typeof kardexSort
+                  )}
+                >
+                  <option value="recientes">Más recientes primero</option>
+                  <option value="antiguos">Más antiguos primero</option>
+                </select>
+              </label>
+
+              {kardexPeriod === 'personalizado' && (
+                <>
+                  <label>
+                    Desde
+                    <input
+                      type="date"
+                      value={kardexDateFrom}
+                      max={kardexDateTo || undefined}
+                      aria-invalid={hasInvalidKardexDateRange}
+                      onChange={event => setKardexDateFrom(event.target.value)}
+                    />
+                  </label>
+
+                  <label>
+                    Hasta
+                    <input
+                      type="date"
+                      value={kardexDateTo}
+                      min={kardexDateFrom || undefined}
+                      aria-invalid={hasInvalidKardexDateRange}
+                      onChange={event => setKardexDateTo(event.target.value)}
+                    />
+                  </label>
+                </>
+              )}
+
+              <button
+                type="button"
+                className="back-button"
+                onClick={() => {
+                  setKardexProduct('');
+                  setKardexType('Todos');
+                  setKardexPeriod('30');
+                  setKardexDateFrom('');
+                  setKardexDateTo('');
+                  setKardexSort('recientes');
+                }}
+              >
+                Limpiar filtros
+              </button>
+            </div>
+
+            {hasInvalidKardexDateRange && (
+              <p className="kardex-date-error" role="alert">
+                La fecha inicial no puede ser posterior a la fecha final.
+              </p>
+            )}
+            <p className="kardex-results">
+              Movimientos encontrados: <strong>{filteredMovements.length}</strong>
+            </p>
+
+            {filteredMovements.length === 0 ? (
+              <div className="empty-state">
+                <BookOpenText size={32}/>
+                <strong>No hay movimientos para mostrar</strong>
+                <p>
+                  Prueba otros filtros o registra una compra, venta o ajuste
+                  para un producto activo.
+                </p>
+              </div>
+            ) : (
+              <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Fecha</th>
+                      <th>Producto</th>
+                      <th>Tipo</th>
+                      <th>Cantidad</th>
+                      <th>Stock anterior</th>
+                      <th>Stock nuevo</th>
+                      <th>Costo unitario</th>
+                      <th>Motivo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredMovements.map(movement => (
+                      <tr key={movement.id}>
+                        <td>{new Date(movement.createdAt).toLocaleString('es-NI')}</td>
+                        <td><strong>{movement.productName}</strong></td>
+                        <td>{movement.type}</td>
+                        <td className={movement.quantity < 0 ? 'movement-out' : 'movement-in'}>
+                          {movement.quantity > 0 ? '+' : ''}{movement.quantity}
+                        </td>
+                        <td>{movement.stockBefore}</td>
+                        <td>{movement.stockAfter}</td>
+                        <td>
+                          {movement.unitCost === null
+                            ? '—'
+                            : formatCurrency(movement.unitCost)}
+                        </td>
+                        <td>{movement.reason}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
 
         {page === 'Arqueo' && <section className="panel">
           <h2>Arqueo de inventario</h2>

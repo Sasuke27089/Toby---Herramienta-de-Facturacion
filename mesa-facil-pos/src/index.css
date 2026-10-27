@@ -229,10 +229,6 @@ td strong { color: #293e32; }
 .command-card span { color: #718077; font-size: 12px; }
 .command-card > strong { white-space: nowrap; }
 .command-card .serve-button { width: auto; flex: 0 0 auto; margin: 0; white-space: nowrap; }
-.purchase-form { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; margin-top: 20px; }
-.purchase-form label { display: grid; gap: 7px; color: #52665a; font-size: 11px; font-weight: 700; }
-.purchase-form input, .purchase-form select { min-width: 0; width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: #fff; color: #294237; }
-.purchase-form .primary-button { grid-column: 1 / -1; justify-self: start; width: auto; margin: 0; }
 .movement-in { color: #276a46; font-weight: 700; }
 .movement-out { color: #b74a45; font-weight: 700; }
 .settings-panel > p, .panel > p { color: #718077; line-height: 1.6; font-size: 12px; }
@@ -260,6 +256,36 @@ td strong { color: #293e32; }
 .restaurant-save-status { color: #276a46; }
 .restaurant-save-error { color: #b74a45; }
 footer { padding: 30px 0 10px; text-align: center; color: #9aa59e; font-size: 10px; }
+
+.inventory-bulk-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.inventory-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.inventory-bulk-actions input[type="checkbox"],
+.table-scroll input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  accent-color: #2563eb;
+}
+.inventory-bulk-actions > span {
+  font-size: 14px;
+  color: #64748b;
+}
+.inventory-bulk-actions button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 @media (max-width: 1100px) {
   .sidebar { width: 205px; }
@@ -296,8 +322,6 @@ footer { padding: 30px 0 10px; text-align: center; color: #9aa59e; font-size: 10
   .restaurant-form-wide { grid-column: auto; }
   .restaurant-form .primary-button { width: 100%; }
   .product-editing-banner { align-items: flex-start; flex-direction: column; }
-  .purchase-form { grid-template-columns: 1fr; }
-  .purchase-form .primary-button { grid-column: auto; width: 100%; }
   .command-card { align-items: flex-start; flex-wrap: wrap; }
   .command-card > div { flex: 1 1 100%; }
   .command-card .serve-button { width: 100%; }
@@ -648,4 +672,61 @@ footer { padding: 30px 0 10px; text-align: center; color: #9aa59e; font-size: 10
     height: 58px;
   }
   .floor-element.floor-bar { width: 100px; height: 46px; }
+}
+.kardex-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 14px;
+  align-items: end;
+  margin: 20px 0 14px;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+}
+.kardex-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #334155;
+}
+.kardex-filters input,
+.kardex-filters select {
+  width: 100%;
+  min-width: 0;
+  min-height: 40px;
+  padding: 9px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #0f172a;
+  font: inherit;
+}
+.kardex-filters input:focus,
+.kardex-filters select:focus {
+  outline: 2px solid #93c5fd;
+  outline-offset: 1px;
+  border-color: #2563eb;
+}
+.kardex-filters input[aria-invalid="true"] {
+  border-color: #b74a45;
+}
+.kardex-results {
+  margin: 12px 0;
+  color: #64748b;
+  font-size: 14px;
+}
+.kardex-results strong { color: #0f172a; }
+.kardex-date-error {
+  margin: 8px 0;
+  color: #b74a45;
+  font-size: 13px;
+}
+@media (max-width: 600px) {
+  .kardex-filters {
+    grid-template-columns: 1fr;
+    padding: 12px;
+  }
 }
